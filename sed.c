@@ -580,6 +580,109 @@ int sed_shadowmbr(int argc, char **argv, struct command *cmd,
 	return opal_error_to_human(ioctl(fd, IOC_OPAL_ENABLE_DISABLE_MBR, &mbr));
 }
 
+int sed_mbr_done(int argc, char **argv, struct command *cmd,
+			 struct plugin *plugin)
+{
+	const char *desc = "Mark Shadow MBR as done";
+	const char *mbr_d = "Mark Shadow MBR as done";
+	struct opal_mbr_data mbr = { };
+	struct config {
+		char *password;
+		bool done;
+	};
+	struct config cfg = { };
+	const struct argconfig_commandline_options command_line_options[] = {
+		{"password", 'p', "FMT", CFG_STRING, &cfg.password, required_argument, pw_d},
+		{"done", 'd', "NUM", CFG_NONE, &cfg.done, no_argument, mbr_d},
+		{NULL}
+	};
+	int fd;
+
+	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
+
+	if (cfg.password == NULL) {
+		cfg.password = read_password ();
+		if (cfg.password == NULL) {
+			fprintf(stderr, "Need ADMIN1 password for mbr shadow enable/disable\n");
+			return EINVAL;
+		}
+	}
+
+	if (cfg.done)
+		mbr.enable_disable = OPAL_MBR_ENABLE;
+	else
+		mbr.enable_disable = OPAL_MBR_DISABLE;
+
+
+	mbr.key.key_len = snprintf((char *)(char *)mbr.key.key,
+				   sizeof(mbr.key.key),
+				   "%s", cfg.password);
+	return opal_error_to_human(ioctl(fd, IOC_OPAL_MBR_STATUS, &mbr));
+}
+
+int sed_load_mbr(int argc, char **argv, struct command *cmd, struct plugin *plugin)
+{
+	const char *desc = "Load file in the MBR Shadow";
+	const char *file_d = "file to be loaded";
+	struct opal_shadow_mbr mbr = { };
+	struct cfg {
+		char *password;
+		char *file;
+	};
+	struct cfg cfg;
+	const struct argconfig_commandline_options command_line_options[] = {
+		{"password", 'p', "FMT", CFG_STRING, &cfg.password, required_argument, pw_d},
+		{"infile", 'i', "PATH", CFG_STRING, &cfg.file, required_argument, file_d},
+		{NULL}
+	};
+	struct stat sb;
+	int fd;
+	int pba;
+
+	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
+
+	pba = open(cfg.file, O_RDONLY | O_CLOEXEC);
+	if (pba == -1) {
+		perror("Could not open pba file");
+		return errno;
+	}
+
+	if (fstat(pba, &sb) == -1) {
+		perror("Could not get size of pba file");
+		return errno;
+	}
+
+	mbr.data = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, pba, 0);
+	if (mbr.data == MAP_FAILED) {
+		perror("Could not map pba file");
+		return errno;
+	}
+
+	if (cfg.password == NULL) {
+		cfg.password = read_password ();
+		if (cfg.password == NULL) {
+			fprintf(stderr, "Need ADMIN1 password for mbr shadow write\n");
+			return EINVAL;
+		}
+	}
+
+	mbr.key.lr = 0;
+	mbr.key.key_len = snprintf((char *)(char *)mbr.key.key,
+				   sizeof(mbr.key.key),
+				   "%s", cfg.password);
+	mbr.offset = 0;
+	mbr.size = sb.st_size;
+	fprintf(stderr, "ioctl(fd<%i>, IOC_OPAL_WRITE_SHADOW_MBR, &mbr<%p>)\n",
+		fd, &mbr);
+	fprintf(stderr, "key: lr=%hhu key=%.*s data=%p offset=%llu size=%llu\n",
+		mbr.key.lr, mbr.key.key_len, mbr.key.key, mbr.data, mbr.offset, mbr.size);
+	return opal_error_to_human(ioctl(fd, IOC_OPAL_WRITE_SHADOW_MBR, &mbr));
+}
+
 int sed_setpw(int argc, char **argv, struct command *cmd,
 	      struct plugin *plugin)
 {

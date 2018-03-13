@@ -15,11 +15,13 @@ COMMAND_LIST(
 	ENTRY("sed-reverttper", "Revert the TPer to Factory settings *THIS WILL ERASE YOUR DATA*", sed_reverttper)
 	ENTRY("sed-setuplr", "Set up locking ranges", sed_setuplr)
 	ENTRY("sed-addusertolr", "Add Users to Locking ranges", sed_add_usr_to_lr)
-	ENTRY("sed-shadowMBR", "Enable or Disable Shadow MBR", sed_shadowmbr)
 	ENTRY("sed-setpw", "Set Password for UserN/Admin1", sed_setpw)
 	ENTRY("sed-enable-user", "Enable a user in the Locking SP", sed_enable_user)
 	ENTRY("sed-eraselr", "Erase a locking range", sed_erase_lr)
 	ENTRY("sed-secure-eraselr", "Erase a locking range", sed_secure_erase_lr)
+	ENTRY("sed-shadow-mbr", "Enable or Disable Shadow MBR", sed_shadowmbr)
+	ENTRY("sed-load-mbr", "load file into shadow MBR", sed_load_mbr)
+	ENTRY("sed-mbr-done", "Mark Shadow MBR as done", sed_mbr_done)
 );
 #endif
 #include "define_cmd.h"
