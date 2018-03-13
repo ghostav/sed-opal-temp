@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include <termios.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,6 +109,66 @@ static int open_dev(char *dev)
  perror:
 	perror(dev);
 	return err;
+}
+
+static char *read_password () {
+	struct termios old, new;
+	char *str;
+	int fd;
+	int tty = 1;
+
+	fd = fileno (stdin);
+	if (fd == -1)
+		return NULL;
+
+	str = malloc (255);
+	if (str == NULL)
+		return NULL;
+
+	if (tcgetattr (fd, &old)) {
+		tty = !(errno == ENOTTY);
+		if (tty) {
+			free (str);
+			return NULL;
+		}
+	} else {
+		new = old;
+#define LMASK (ECHO | ECHONL | ICANON)
+#define LREQ  (IEXTEN)
+		while (new.c_lflag & (LMASK) || !(new.c_lflag & LREQ)) {
+			new.c_lflag &= ~(LMASK);
+			new.c_lflag |= LREQ;
+			if (tcsetattr (fd, TCSANOW, &new))
+				goto reset;
+			if (tcgetattr (fd, &new))
+				goto reset;
+
+		}
+		fprintf (stdout, "Password: ");
+		fflush (stdout);
+	}
+
+	if (!fgets (str, 255, stdin)) {
+reset:		free (str);
+		str = NULL;
+	} else {
+		size_t len = strnlen (str, 255);
+		if (str[len-1] == '\n')
+			str[--len] = '\0';
+		fprintf (stderr, "strnlen (%s, 255): %zu\n", str, len);
+	}
+
+	if (tty) {
+		while (old.c_lflag != new.c_lflag) {
+			if (tcsetattr (fd, TCSANOW, &old))
+				break;
+			if (tcgetattr (fd, &new))
+				break;
+		}
+		fputc ('\n', stdout);
+	}
+
+	return str;
 }
 
 static int check_arg_dev(int argc, char **argv)
@@ -223,10 +284,18 @@ static int do_generic_lkul(int argc, char **argv, struct command *cmd,
 	int fd;
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if ( (!cfg.sum && cfg.user == NULL) || cfg.lock_type == NULL || cfg.password == NULL) {
-		fprintf(stderr, "Need to supply user, lock type and password!\n");
-		return EINVAL;
+		if (!((!cfg.sum && cfg.user == NULL) || cfg.lock_type == NULL) && cfg.password == NULL)
+			cfg.password = read_password ();
+
+		if ( (!cfg.sum && cfg.user == NULL) || cfg.lock_type == NULL || cfg.password == NULL) {
+			fprintf(stderr, "Need to supply user (%s), lock type (%s) and password (%s)!\n",
+				cfg.user, cfg.lock_type, cfg.password);
+			return EINVAL;
+		}
 	}
 
 	oln.session.sum = cfg.sum;
@@ -266,10 +335,15 @@ static int do_generic_opal(int argc, char **argv, struct command *cmd,
 	int fd;
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if (cfg.password == NULL) {
-		fprintf(stderr, "Must Provide a password for this command\n");
-		return EINVAL;
+		cfg.password = read_password ();
+		if (cfg.password == NULL) {
+			fprintf(stderr, "Must Provide a password for this command\n");
+			return EINVAL;
+		}
 	}
 
 	pw.key_len = snprintf((char *)pw.key, sizeof(pw.key), "%s", cfg.password);
@@ -329,10 +403,18 @@ int sed_activatelsp(int argc, char **argv, struct command *cmd, struct plugin *p
 	int fd;
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if (cfg.password == NULL || (cfg.sum && !cfg.lr_str)) {
-		fprintf(stderr, "Must Provide a password, and a LR string if SUM \n");
-		return EINVAL;
+		if (!(cfg.sum && !cfg.lr_str) && cfg.password == NULL) {
+			cfg.password = read_password ();
+		}
+
+		if (cfg.password == NULL || (cfg.sum && !cfg.lr_str)) {
+			fprintf(stderr, "Must Provide a password, and a LR string if SUM \n");
+			return EINVAL;
+		}
 	}
 
 	opal_activate.sum = cfg.sum;
@@ -407,12 +489,19 @@ int sed_setuplr(int argc, char **argv, struct command *cmd, struct plugin *plugi
 	};
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if (cfg.range_start == ~0 || cfg.range_length == ~0 || (!cfg.sum && cfg.user == NULL) ||
 	    cfg.password == NULL) {
+		if (!(cfg.range_start == ~0 || cfg.range_length == ~0 || (!cfg.sum && cfg.user == NULL)) && cfg.password == NULL)
+			cfg.password = read_password ();
 
-		    fprintf(stderr, "Incorrect parameters, please try again\n");
-		    return EINVAL;
+		if (cfg.range_start == ~0 || cfg.range_length == ~0 || (!cfg.sum && cfg.user == NULL) ||
+		    cfg.password == NULL) {
+			fprintf(stderr, "Incorrect parameters, please try again\n");
+			return EINVAL;
+		}
 	}
 
 	if (!cfg.sum)
@@ -452,7 +541,6 @@ int sed_add_usr_to_lr(int argc, char **argv, struct command *cmd,
 int sed_shadowmbr(int argc, char **argv, struct command *cmd,
 			 struct plugin *plugin)
 {
-
 	const char *desc = "Enable or Disable the MBR Shadow";
 	const char *mbr_d = "Enable or Disable the MBR Shadow";
 	struct opal_mbr_data mbr = { };
@@ -469,10 +557,15 @@ int sed_shadowmbr(int argc, char **argv, struct command *cmd,
 	int fd;
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if (cfg.password == NULL) {
-		fprintf(stderr, "Need ADMIN1 password for mbr shadow enable/disable\n");
-		return EINVAL;
+		cfg.password = read_password ();
+		if (cfg.password == NULL) {
+			fprintf(stderr, "Need ADMIN1 password for mbr shadow enable/disable\n");
+			return EINVAL;
+		}
 	}
 
 	if (cfg.enable_mbr)
@@ -518,6 +611,8 @@ int sed_setpw(int argc, char **argv, struct command *cmd,
 	int fd;
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if (cfg.user_for_pw == NULL || cfg.lsp_authority == NULL ||
 	    cfg.new_password == NULL || cfg.authority_pw == NULL) {
@@ -576,10 +671,17 @@ int sed_enable_user(int argc, char **argv, struct command *cmd,
 	int fd;
 
 	fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if (cfg.user == NULL || cfg.password == NULL) {
-		fprintf(stderr, "Invalid arguments for %s\n", __func__);
-		return EINVAL;
+		if (cfg.user != NULL && cfg.password == NULL)
+			cfg.password = read_password ();
+
+		if (cfg.user == NULL || cfg.password == NULL) {
+			fprintf(stderr, "Invalid arguments for %s\n", __func__);
+			return EINVAL;
+		}
 	}
 
 	if (get_user(cfg.user, &usr.who))
@@ -617,10 +719,16 @@ int sed_erase_lr(int argc, char **argv, struct command *cmd,
 
 	struct opal_session_info session;
 	int fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if ( (!cfg.sum && cfg.user == NULL) || cfg.password == NULL) {
-		fprintf(stderr, "Need to supply user, lock type and password!\n");
-		return EINVAL;
+		if (!(!cfg.sum && cfg.user == NULL) && cfg.password == NULL)
+			cfg.password = read_password ();
+		if ( (!cfg.sum && cfg.user == NULL) || cfg.password == NULL) {
+			fprintf(stderr, "Need to supply user, lock type and password!\n");
+			return EINVAL;
+		}
 	}
 
 	session.sum = cfg.sum;
@@ -658,10 +766,17 @@ int sed_secure_erase_lr(int argc, char **argv, struct command *cmd,
 		{NULL}
 	};
 	int fd = parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
+	if (fd <= 0)
+		return fd==0?EINVAL:-fd;
 
 	if (cfg.user == NULL || cfg.password == NULL) {
-		fprintf(stderr, "Invalid arguments for %s\n", __func__);
-		return EINVAL;
+		if (cfg.user != NULL && cfg.password == NULL)
+			cfg.password = read_password ();
+
+		if (cfg.user == NULL && cfg.password == NULL) {
+			fprintf(stderr, "Invalid arguments for %s\n", __func__);
+			return EINVAL;
+		}
 	}
 
 	if (get_user(cfg.user, &usr.who))
