@@ -626,15 +626,18 @@ int sed_load_mbr(int argc, char **argv, struct command *cmd, struct plugin *plug
 {
 	const char *desc = "Load file in the MBR Shadow";
 	const char *file_d = "file to be loaded";
+	const char *offset_d = "offset to place file in shadow mbr";
 	struct opal_shadow_mbr mbr = { };
 	struct cfg {
 		char *password;
 		char *file;
+		size_t offset;
 	};
-	struct cfg cfg;
+	struct cfg cfg = {.offset = 0};
 	const struct argconfig_commandline_options command_line_options[] = {
 		{"password", 'p', "FMT", CFG_STRING, &cfg.password, required_argument, pw_d},
 		{"infile", 'i', "PATH", CFG_STRING, &cfg.file, required_argument, file_d},
+		{"offset", 'o', "BYTES", CFG_POSITIVE, &cfg.offset, required_argument, offset_d},
 		{NULL}
 	};
 	struct stat sb;
@@ -674,7 +677,7 @@ int sed_load_mbr(int argc, char **argv, struct command *cmd, struct plugin *plug
 	mbr.key.key_len = snprintf((char *)(char *)mbr.key.key,
 				   sizeof(mbr.key.key),
 				   "%s", cfg.password);
-	mbr.offset = 0;
+	mbr.offset = cfg.offset;
 	mbr.size = sb.st_size;
 	fprintf(stderr, "ioctl(fd<%i>, IOC_OPAL_WRITE_SHADOW_MBR, &mbr<%p>)\n",
 		fd, &mbr);
